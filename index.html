@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Outil de Détection de Faux Doublons</title>
+    <link rel="icon" href="mon_logo.png" type="image/png">
+    <!-- SheetJS Library for reading Excel files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 2rem;
+            background-color: #f4f7f9;
+            color: #333;
+            display: flex;
+            justify-content: center;
+        }
+        .container {
+            max-width: 900px;
+            width: 100%;
+            background-color: #ffffff;
+            padding: 2rem 2.5rem;
+            border-radius: 12px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+            margin-bottom: 1.5rem;
+            font-size: 1.8rem;
+        }
+        .upload-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin-bottom: 2rem;
+            padding: 1.5rem;
+            background-color: #fafafa;
+            border: 1px dashed #dce4e8;
+            border-radius: 8px;
+        }
+        .file-input-wrapper {
+            display: flex;
+            flex-direction: column;
+        }
+        label {
+            font-weight: 600;
+            color: #34495e;
+            margin-bottom: 0.5rem;
+        }
+        input[type="file"] {
+            border: 1px solid #ccc;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #fff;
+        }
+        .status {
+            font-style: italic;
+            color: #27ae60;
+            font-size: 0.9em;
+            height: 1.2em;
+            margin-top: 5px;
+        }
+        .button-wrapper {
+            text-align: center;
+            margin-top: 1rem;
+        }
+        #analyzeBtn {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            font-size: 1.1em;
+            font-weight: 600;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.2s;
+        }
+        #analyzeBtn:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+        #analyzeBtn:not(:disabled):hover {
+            background-color: #2980b9;
+            transform: translateY(-2px);
+        }
+        #resultsContainer {
+            margin-top: 2rem;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: right;
+            border-bottom: 1px solid #e0e0e0;
+            vertical-align: top; /* Aligns content to the top for multi-line cells */
+        }
+        th {
+            background-color: #ecf0f1;
+            color: #34495e;
+            font-weight: 600;
+            text-align: center;
+        }
+        th:first-child, td:first-child {
+            text-align: left;
+        }
+        tbody tr:hover {
+            background-color: #f9f9f9;
+        }
+        tfoot {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        tfoot td {
+            border-top: 2px solid #34495e;
+        }
+        .credit { color: #27ae60; font-weight: 500; }
+        .debit { color: #c0392b; font-weight: 500; }
+        .total-cell { font-size: 1.1em; }
+        .date-details, .piece-details {
+            font-size: 0.85em;
+            color: #7f8c8d;
+            font-style: italic;
+            white-space: nowrap;
+        }
+        .date-details {
+             margin-left: 4px;
+        }
+        .piece-details {
+            display: block; /* Ensures it takes its own line */
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Faux Doublons - Rapprochement Bancaire</h1>
+        
+        <div class="upload-section">
+            <div class="file-input-wrapper">
+                <label for="ledgerFile">1. Charger l'extrait du Grand-Livre (512)</label>
+                <input type="file" id="ledgerFile" accept=".xlsx, .xls">
+                <span class="status" id="ledgerStatus"></span>
+            </div>
+            <div class="file-input-wrapper">
+                <label for="bankFile">2. Charger le relevé bancaire</label>
+                <input type="file" id="bankFile" accept=".xlsx, .xls">
+                <span class="status" id="bankStatus"></span>
+            </div>
+        </div>
+
+        <div class="button-wrapper">
+            <button id="analyzeBtn" disabled>Analyser les fichiers</button>
+        </div>
+
+        <div id="resultsContainer">
+            <!-- Le tableau des résultats sera injecté ici par le script -->
+        </div>
+
+        <div style="position: fixed; bottom: 10px; right: 10px; font-size: 0.75em; color: #aaa; text-align: right;">
+            © 2025 Développé par Multibrasservices<br>
+            Version 06.08.25
+        </div>
+    </div>
+
+<script>
+    // --- DOM ELEMENTS ---
+    const ledgerFileInput = document.getElementById('ledgerFile');
+    const bankFileInput = document.getElementById('bankFile');
+    const ledgerStatus = document.getElementById('ledgerStatus');
+    const bankStatus = document.getElementById('bankStatus');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const resultsContainer = document.getElementById('resultsContainer');
+
+    let ledgerFile = null;
+    let bankFile = null;
+
+    // --- EVENT LISTENERS ---
+    ledgerFileInput.addEventListener('change', (e) => {
+        ledgerFile = e.target.files[0];
+        ledgerStatus.textContent = ledgerFile ? `Fichier chargé : ${ledgerFile.name}` : '';
+        checkFilesAndEnableButton();
+    });
+
+    bankFileInput.addEventListener('change', (e) => {
+        bankFile = e.target.files[0];
+        bankStatus.textContent = bankFile ? `Fichier chargé : ${bankFile.name}` : '';
+        checkFilesAndEnableButton();
+    });
+
+    analyzeBtn.addEventListener('click', handleAnalysis);
+
+    // --- CORE FUNCTIONS ---
+    function checkFilesAndEnableButton() {
+        if (ledgerFile && bankFile) {
+            analyzeBtn.disabled = false;
+        }
+    }
+
+    function parseNumber(value) {
+        if (value === null || value === undefined) return null;
+        const cleanedValue = String(value).replace(/\s/g, '').replace(',', '.');
+        const number = parseFloat(cleanedValue);
+        return isNaN(number) ? null : number;
+    }
+
+    function formatDate(date) {
+        if (!(date instanceof Date) || isNaN(date)) {
+            return typeof date === 'string' ? date : '';
+        }
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const year = String(date.getFullYear());
+        return `${day}/${month}/${year}`;
+    }
+
+    function readFile(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                    resolve(json);
+                } catch (err) {
+                    reject(err);
+                }
+            };
+            reader.onerror = (err) => reject(err);
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    function parseLedgerData(data) {
+        const transactions = [];
+        // Les données commencent à la ligne 8 (index 7)
+        for (let i = 7; i < data.length; i++) {
+            const row = data[i];
+            if (!row || row.length === 0) continue;
+
+            const date = formatDate(row[1]); // Date in column B
+            const piece = row[5]; // Numéro de pièce in column F
+            const debit = parseNumber(row[7]); // Débit in column H
+            const credit = parseNumber(row[9]); // Crédit in column J
+
+            if (debit !== null) {
+                transactions.push({ amount: debit, type: 'debit', date: date, piece: piece });
+            }
+            if (credit !== null) {
+                transactions.push({ amount: credit, type: 'credit', date: date, piece: piece });
+            }
+        }
+        return transactions;
+    }
+
+    function parseBankData(data) {
+        const transactions = [];
+        // Les données commencent à la ligne 11 (index 10)
+        for (let i = 10; i < data.length; i++) {
+            const row = data[i];
+            if (!row || row.length === 0) continue;
+
+            const date = formatDate(row[0]); // Date in column A
+            const debit = parseNumber(row[2]); // Colonne C
+            const credit = parseNumber(row[3]); // Colonne D
+
+            if (debit !== null) {
+                transactions.push({ amount: debit, type: 'debit', date: date });
+            }
+            if (credit !== null) {
+                transactions.push({ amount: credit, type: 'credit', date: date });
+            }
+        }
+        return transactions;
+    }
+
+    async function handleAnalysis() {
+        resultsContainer.innerHTML = '<p>Analyse en cours...</p>';
+        try {
+            const ledgerRawData = await readFile(ledgerFile);
+            const bankRawData = await readFile(bankFile);
+
+            const ledgerTransactions = parseLedgerData(ledgerRawData);
+            const bankTransactions = parseBankData(bankRawData);
+
+            const amountCounts = {};
+
+            ledgerTransactions.forEach(tx => {
+                const key = tx.amount.toFixed(2);
+                if (!amountCounts[key]) {
+                    amountCounts[key] = { ledger: 0, bank: 0, type: null, ledgerDates: [], bankDates: [], ledgerPieces: [] };
+                }
+                amountCounts[key].ledger++;
+                amountCounts[key].ledgerDates.push(tx.date);
+                amountCounts[key].ledgerPieces.push(tx.piece);
+                amountCounts[key].type = tx.type === 'debit' ? 'credit' : 'debit';
+            });
+
+            bankTransactions.forEach(tx => {
+                const key = tx.amount.toFixed(2);
+                if (!amountCounts[key]) {
+                    amountCounts[key] = { ledger: 0, bank: 0, type: null, ledgerDates: [], bankDates: [], ledgerPieces: [] };
+                }
+                amountCounts[key].bank++;
+                amountCounts[key].bankDates.push(tx.date);
+                if (amountCounts[key].type === null) {
+                    amountCounts[key].type = tx.type;
+                }
+            });
+
+            const discrepancies = [];
+            for (const amountStr in amountCounts) {
+                const counts = amountCounts[amountStr];
+                if (counts.ledger !== counts.bank && counts.ledger > 0 && counts.bank > 0) {
+                    const amount = parseFloat(amountStr);
+                    discrepancies.push({
+                        amount: amount,
+                        ledgerCount: counts.ledger,
+                        bankCount: counts.bank,
+                        discrepancy: (counts.ledger - counts.bank) * amount,
+                        type: counts.type,
+                        ledgerDates: counts.ledgerDates,
+                        bankDates: counts.bankDates,
+                        ledgerPieces: counts.ledgerPieces
+                    });
+                }
+            }
+
+            renderResults(discrepancies);
+
+        } catch (error) {
+            console.error("Erreur lors de l'analyse:", error);
+            resultsContainer.innerHTML = `<p class="debit">Erreur lors de la lecture d'un fichier. Vérifiez que le format est correct et réessayez.</p>`;
+        }
+    }
+
+    function renderResults(discrepancies) {
+        if (discrepancies.length === 0) {
+            resultsContainer.innerHTML = '<p class="credit">Aucun écart trouvé correspondant aux critères (occurrences différentes dans les deux fichiers).</p>';
+            return;
+        }
+
+        let totalDiscrepancy = 0;
+        let tableRows = '';
+
+        discrepancies.forEach(d => {
+            totalDiscrepancy += d.discrepancy;
+            const typeClass = d.type === 'credit' ? 'credit' : 'debit';
+            const amountOnStatement = `${d.amount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })} (${d.type === 'credit' ? 'Crédit' : 'Débit'})`;
+            const discrepancyFormatted = d.discrepancy.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+
+            const ledgerCellContent = `
+                ${d.ledgerCount} <span class="date-details">(${d.ledgerDates.join(', ')})</span>
+                <span class="piece-details">(Pièces: ${d.ledgerPieces.join(', ')})</span>
+            `;
+            const bankCellContent = `${d.bankCount} <span class="date-details">(${d.bankDates.join(', ')})</span>`;
+
+            tableRows += `
+                <tr>
+                    <td class="${typeClass}">${amountOnStatement}</td>
+                    <td style="text-align:center;">${ledgerCellContent}</td>
+                    <td style="text-align:center;">${bankCellContent}</td>
+                    <td class="${typeClass}">${discrepancyFormatted}</td>
+                </tr>
+            `;
+        });
+
+        const totalClass = totalDiscrepancy >= 0 ? 'credit' : 'debit';
+        const totalFormatted = totalDiscrepancy.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+
+        const tableHTML = `
+            <h2>Analyse des Écarts de Rapprochement</h2>
+            <p>
+                Ce tableau liste les montants apparaissant un nombre de fois différent entre votre grand-livre (compte 512) et votre relevé bancaire.
+            </p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Montant sur Relevé</th>
+                        <th>Nb 512</th>
+                        <th>Nb Relevé</th>
+                        <th>Écart</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${tableRows}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="3" style="text-align:right; font-size: 1.2em;">Total des Écarts</td>
+                        <td class="${totalClass} total-cell">${totalFormatted}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        `;
+        resultsContainer.innerHTML = tableHTML;
+    }
+</script>
+
+</body>
+</html>
